@@ -71,7 +71,7 @@ function findMatch(user) {
   return null;
 }
 
-// Helper function to add user to waiting queue
+
 function addToWaitingQueue(user) {
   user.countries.forEach(country => {
     if (!waitingQueue.has(country)) {
