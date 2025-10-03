@@ -111,56 +111,64 @@ io.on('connection', (socket) => {
 
   // Handle user joining with country preferences
   socket.on('join', (data) => {
-    const { countries, userInfo } = data;
-    
-    if (!countries || countries.length === 0) {
-      socket.emit('error', { message: 'Please select at least one country' });
-      return;
-    }
+  const { countries, userInfo } = data;
+  
+  if (!countries || countries.length === 0) {
+    socket.emit('error', { message: 'Please select at least one country' });
+    return;
+  }
 
-    // Create new user
-    const user = new User(socket.id, countries, userInfo);
-    activeUsers.set(socket.id, user);
+  const user = new User(socket.id, countries, userInfo);
+  activeUsers.set(socket.id, user);
 
-    // Try to find a match
-    const match = findMatch(user);
+  const match = findMatch(user);
+  
+  if (match) {
+    const room = new Room(user, match);
     
-    if (match) {
-      // Create room for matched users
-      const room = new Room(user, match);
-      
-      // Update user states
-      user.isMatched = true;
-      user.roomId = room.id;
-      match.isMatched = true;
-      match.roomId = room.id;
-      
-      // Store room and user-room mapping
-      activeRooms.set(room.id, room);
-      userRooms.set(user.socketId, room.id);
-      userRooms.set(match.socketId, room.id);
-      
-      // Join socket rooms
-      socket.join(room.id);
-      io.sockets.sockets.get(match.socketId)?.join(room.id);
-      
-      // Notify both users about the match
-      io.to(room.id).emit('matched', {
-        roomId: room.id,
-        partner: {
-          socketId: match.socketId === socket.id ? user.socketId : match.socketId,
-          userInfo: match.socketId === socket.id ? user.userInfo : match.userInfo
-        }
-      });
-      
-      console.log(`Match found: ${user.socketId} <-> ${match.socketId} in room ${room.id}`);
-    } else {
-      // Add to waiting queue
-      addToWaitingQueue(user);
-      socket.emit('waiting', { message: 'Looking for a match...' });
-      console.log(`User ${socket.id} added to waiting queue for countries: ${countries.join(', ')}`);
-    }
-  });
+    user.isMatched = true;
+    user.roomId = room.id;
+    match.isMatched = true;
+    match.roomId = room.id;
+    
+    activeRooms.set(room.id, room);
+    userRooms.set(user.socketId, room.id);
+    userRooms.set(match.socketId, room.id);
+    
+    socket.join(room.id);
+    io.sockets.sockets.get(match.socketId)?.join(room.id);
+    
+    // CRITICAL FIX: Explicitly designate who creates the offer
+    // The user who just joined (current socket) is the offerer
+    // The matched user (who was waiting) is the answerer
+    
+    // Send to the NEW user (offerer)
+    socket.emit('matched', {
+      roomId: room.id,
+      isOfferer: true,  // <-- NEW: This user creates the offer
+      partner: {
+        socketId: match.socketId,
+        userInfo: match.userInfo
+      }
+    });
+    
+    // Send to the WAITING user (answerer)
+    io.to(match.socketId).emit('matched', {
+      roomId: room.id,
+      isOfferer: false,  // <-- NEW: This user waits for offer
+      partner: {
+        socketId: user.socketId,
+        userInfo: user.userInfo
+      }
+    });
+    
+    console.log(`Match found: ${user.socketId} (offerer) <-> ${match.socketId} (answerer) in room ${room.id}`);
+  } else {
+    addToWaitingQueue(user);
+    socket.emit('waiting', { message: 'Looking for a match...' });
+    console.log(`User ${socket.id} added to waiting queue for countries: ${countries.join(', ')}`);
+  }
+});
 
   // Handle WebRTC signaling
   socket.on('offer', (data) => {
