@@ -18,12 +18,11 @@ app.use(cors());
 app.use(express.json());
 
 // Data structures to manage users and rooms
-const activeUsers = new Map(); // socketId -> user data
-const waitingQueue = new Map(); // country -> array of user objects
-const activeRooms = new Map(); // roomId -> room data
-const userRooms = new Map(); // socketId -> roomId
+const activeUsers = new Map();
+const waitingQueue = new Map();
+const activeRooms = new Map();
+const userRooms = new Map();
 
-// User class to represent connected users
 class User {
   constructor(socketId, countries, userInfo = {}) {
     this.socketId = socketId;
@@ -35,7 +34,6 @@ class User {
   }
 }
 
-// Room class to represent video chat rooms
 class Room {
   constructor(user1, user2) {
     this.id = uuidv4();
@@ -45,22 +43,18 @@ class Room {
   }
 }
 
-// Helper function to find matching users
 function findMatch(user) {
   for (const country of user.countries) {
     const queue = waitingQueue.get(country) || [];
     
-    // Find a user in the queue who isn't the same user
     const matchIndex = queue.findIndex(waitingUser => 
       waitingUser.socketId !== user.socketId && !waitingUser.isMatched
     );
     
     if (matchIndex !== -1) {
       const match = queue[matchIndex];
-      // Remove matched user from queue
       queue.splice(matchIndex, 1);
       
-      // Clean up empty queues
       if (queue.length === 0) {
         waitingQueue.delete(country);
       }
@@ -71,7 +65,6 @@ function findMatch(user) {
   return null;
 }
 
-
 function addToWaitingQueue(user) {
   user.countries.forEach(country => {
     if (!waitingQueue.has(country)) {
@@ -81,7 +74,6 @@ function addToWaitingQueue(user) {
   });
 }
 
-// Helper function to remove user from waiting queue
 function removeFromWaitingQueue(user) {
   user.countries.forEach(country => {
     const queue = waitingQueue.get(country);
@@ -97,30 +89,14 @@ function removeFromWaitingQueue(user) {
   });
 }
 
-// Helper function to broadcast the current online user count
 function broadcastUserCount() {
   const userCount = io.sockets.sockets.size;
   console.log(`Broadcasting user count: ${userCount}`);
-  io.emit('update-user-count', userCount); // Emits to all connected clients
+  io.emit('update-user-count', userCount);
 }
 
-// Socket.io connection handling
-io.on('connection', (socket) => {
-  console.log(`User connected: ${socket.id}`);
-  broadcastUserCount(); // Broadcast count on new connection
-
-  // Handle user joining with country preferences
-  socket.on('join', (data) => {
-  const { countries, userInfo } = data;
-  
-  if (!countries || countries.length === 0) {
-    socket.emit('error', { message: 'Please select at least one country' });
-    return;
-  }
-
-  const user = new User(socket.id, countries, userInfo);
-  activeUsers.set(socket.id, user);
-
+// CRITICAL FIX: New function to try matching a user
+function tryMatchUser(user, socket) {
   const match = findMatch(user);
   
   if (match) {
@@ -138,24 +114,20 @@ io.on('connection', (socket) => {
     socket.join(room.id);
     io.sockets.sockets.get(match.socketId)?.join(room.id);
     
-    // CRITICAL FIX: Explicitly designate who creates the offer
-    // The user who just joined (current socket) is the offerer
-    // The matched user (who was waiting) is the answerer
-    
-    // Send to the NEW user (offerer)
+    // User who just joined is the offerer
     socket.emit('matched', {
       roomId: room.id,
-      isOfferer: true,  // <-- NEW: This user creates the offer
+      isOfferer: true,
       partner: {
         socketId: match.socketId,
         userInfo: match.userInfo
       }
     });
     
-    // Send to the WAITING user (answerer)
+    // Waiting user is the answerer
     io.to(match.socketId).emit('matched', {
       roomId: room.id,
-      isOfferer: false,  // <-- NEW: This user waits for offer
+      isOfferer: false,
       partner: {
         socketId: user.socketId,
         userInfo: user.userInfo
@@ -163,14 +135,33 @@ io.on('connection', (socket) => {
     });
     
     console.log(`Match found: ${user.socketId} (offerer) <-> ${match.socketId} (answerer) in room ${room.id}`);
+    return true;
   } else {
     addToWaitingQueue(user);
     socket.emit('waiting', { message: 'Looking for a match...' });
-    console.log(`User ${socket.id} added to waiting queue for countries: ${countries.join(', ')}`);
+    console.log(`User ${user.socketId} added to waiting queue for countries: ${user.countries.join(', ')}`);
+    return false;
   }
-});
+}
 
-  // Handle WebRTC signaling
+io.on('connection', (socket) => {
+  console.log(`User connected: ${socket.id}`);
+  broadcastUserCount();
+
+  socket.on('join', (data) => {
+    const { countries, userInfo } = data;
+    
+    if (!countries || countries.length === 0) {
+      socket.emit('error', { message: 'Please select at least one country' });
+      return;
+    }
+
+    const user = new User(socket.id, countries, userInfo);
+    activeUsers.set(socket.id, user);
+
+    tryMatchUser(user, socket);
+  });
+
   socket.on('offer', (data) => {
     const roomId = userRooms.get(socket.id);
     if (roomId) {
@@ -201,7 +192,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle chat messages
   socket.on('message', (data) => {
     const roomId = userRooms.get(socket.id);
     if (roomId) {
@@ -213,66 +203,81 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle user wanting to skip/next partner
+  // CRITICAL FIX: Handle "next" properly
   socket.on('next', () => {
-    handleUserLeave(socket.id, true);
+    console.log(`User ${socket.id} pressed next`);
+    handleUserNext(socket.id);
   });
 
-  // Handle user disconnect
   socket.on('disconnect', () => {
     console.log(`User disconnected: ${socket.id}`);
-    handleUserLeave(socket.id, false);
-    broadcastUserCount(); // Broadcast count on disconnect
+    handleUserDisconnect(socket.id);
+    broadcastUserCount();
   });
 
-  // Helper function to handle user leaving
-  function handleUserLeave(socketId, isNext = false) {
+  // CRITICAL FIX: Separate function for "next" action
+  function handleUserNext(socketId) {
     const user = activeUsers.get(socketId);
     if (!user) return;
 
     if (user.isMatched && user.roomId) {
-      // User was in a room
       const room = activeRooms.get(user.roomId);
       if (room) {
         const partner = room.users.find(u => u.socketId !== socketId);
+        
         if (partner) {
-          // Notify partner about disconnect
-          io.to(partner.socketId).emit(isNext ? 'partner-next' : 'partner-disconnected');
+          // Notify partner
+          io.to(partner.socketId).emit('partner-next');
           
-          // Reset partner state and try to find new match
+          // Reset partner state
           partner.isMatched = false;
           partner.roomId = null;
           userRooms.delete(partner.socketId);
           
-          if (isNext) {
-            // If partner is still connected, try to find them a new match
-            const newMatch = findMatch(partner);
-            if (newMatch) {
-              const newRoom = new Room(partner, newMatch);
-              
-              partner.isMatched = true;
-              partner.roomId = newRoom.id;
-              newMatch.isMatched = true;
-              newMatch.roomId = newRoom.id;
-              
-              activeRooms.set(newRoom.id, newRoom);
-              userRooms.set(partner.socketId, newRoom.id);
-              userRooms.set(newMatch.socketId, newRoom.id);
-              
-              io.sockets.sockets.get(partner.socketId)?.join(newRoom.id);
-              io.sockets.sockets.get(newMatch.socketId)?.join(newRoom.id);
-              
-              io.to(newRoom.id).emit('matched', {
-                roomId: newRoom.id,
-                partner: {
-                  socketId: newMatch.socketId === partner.socketId ? partner.socketId : newMatch.socketId,
-                  userInfo: newMatch.socketId === partner.socketId ? partner.userInfo : newMatch.userInfo
-                }
-              });
-            } else {
-              addToWaitingQueue(partner);
-              io.to(partner.socketId).emit('waiting', { message: 'Looking for a new match...' });
-            }
+          // Try to match partner with someone else
+          const partnerSocket = io.sockets.sockets.get(partner.socketId);
+          if (partnerSocket) {
+            tryMatchUser(partner, partnerSocket);
+          }
+        }
+        
+        // Clean up room
+        activeRooms.delete(user.roomId);
+      }
+      
+      // CRITICAL: Reset current user and try to find them a new match
+      user.isMatched = false;
+      user.roomId = null;
+      userRooms.delete(socketId);
+      
+      // Try to match current user with someone else
+      tryMatchUser(user, socket);
+    }
+  }
+
+  // Separate function for actual disconnect
+  function handleUserDisconnect(socketId) {
+    const user = activeUsers.get(socketId);
+    if (!user) return;
+
+    if (user.isMatched && user.roomId) {
+      const room = activeRooms.get(user.roomId);
+      if (room) {
+        const partner = room.users.find(u => u.socketId !== socketId);
+        
+        if (partner) {
+          // Notify partner about disconnect
+          io.to(partner.socketId).emit('partner-disconnected');
+          
+          // Reset partner state
+          partner.isMatched = false;
+          partner.roomId = null;
+          userRooms.delete(partner.socketId);
+          
+          // Try to match partner with someone else
+          const partnerSocket = io.sockets.sockets.get(partner.socketId);
+          if (partnerSocket) {
+            tryMatchUser(partner, partnerSocket);
           }
         }
         
@@ -285,12 +290,12 @@ io.on('connection', (socket) => {
       removeFromWaitingQueue(user);
     }
 
-    // Clean up user data
+    // Clean up user data completely on disconnect
     activeUsers.delete(socketId);
   }
 });
 
-// REST API endpoints for statistics and monitoring
+// REST API endpoints
 app.get('/api/stats', (req, res) => {
   const totalUsers = activeUsers.size;
   const waitingUsers = Array.from(waitingQueue.values()).reduce((sum, queue) => sum + queue.length, 0);
@@ -298,7 +303,7 @@ app.get('/api/stats', (req, res) => {
   const activeRoomsCount = activeRooms.size;
 
   res.json({
-    totalOnlineUsers: io.sockets.sockets.size, // Also adding the real-time count here
+    totalOnlineUsers: io.sockets.sockets.size,
     totalUsersInLogic: totalUsers,
     waitingUsers,
     matchedUsers,
@@ -317,13 +322,11 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Error handling
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Video chat server running on port ${PORT}`);
@@ -331,7 +334,6 @@ server.listen(PORT, () => {
   console.log(`REST API available at: http://localhost:${PORT}/api`);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   server.close(() => {
