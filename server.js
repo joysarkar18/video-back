@@ -22,6 +22,9 @@ const activeUsers = new Map();
 const waitingQueue = new Map();
 const activeRooms = new Map();
 const userRooms = new Map();
+const nextCooldowns = new Map(); // socketId -> timestamp of last "next"
+
+const NEXT_COOLDOWN_MS = 1000; // 1 second cooldown between "next" actions
 
 class User {
   constructor(socketId, countries, userInfo = {}) {
@@ -44,11 +47,14 @@ class Room {
 }
 
 function findMatch(user) {
+  // Don't match with yourself or users already being processed
   for (const country of user.countries) {
     const queue = waitingQueue.get(country) || [];
     
     const matchIndex = queue.findIndex(waitingUser => 
-      waitingUser.socketId !== user.socketId && !waitingUser.isMatched
+      waitingUser.socketId !== user.socketId && 
+      !waitingUser.isMatched &&
+      waitingUser !== user  // Extra safety check
     );
     
     if (matchIndex !== -1) {
@@ -220,39 +226,49 @@ io.on('connection', (socket) => {
     const user = activeUsers.get(socketId);
     if (!user) return;
 
-    if (user.isMatched && user.roomId) {
-      const room = activeRooms.get(user.roomId);
-      if (room) {
-        const partner = room.users.find(u => u.socketId !== socketId);
-        
-        if (partner) {
-          // Notify partner
-          io.to(partner.socketId).emit('partner-next');
-          
-          // Reset partner state
-          partner.isMatched = false;
-          partner.roomId = null;
-          userRooms.delete(partner.socketId);
-          
-          // Try to match partner with someone else
-          const partnerSocket = io.sockets.sockets.get(partner.socketId);
-          if (partnerSocket) {
-            tryMatchUser(partner, partnerSocket);
-          }
-        }
-        
-        // Clean up room
-        activeRooms.delete(user.roomId);
-      }
-      
-      // CRITICAL: Reset current user and try to find them a new match
-      user.isMatched = false;
-      user.roomId = null;
-      userRooms.delete(socketId);
-      
-      // Try to match current user with someone else
-      tryMatchUser(user, socket);
+    // Prevent duplicate processing if user already being processed
+    if (!user.isMatched || !user.roomId) {
+      console.log(`User ${socketId} already unmatched, skipping next handler`);
+      return;
     }
+
+    const room = activeRooms.get(user.roomId);
+    if (!room) {
+      console.log(`Room not found for user ${socketId}`);
+      return;
+    }
+
+    const partner = room.users.find(u => u.socketId !== socketId);
+    
+    // Clean up room first
+    activeRooms.delete(user.roomId);
+    
+    // Reset current user (who pressed next)
+    user.isMatched = false;
+    const oldRoomId = user.roomId;
+    user.roomId = null;
+    userRooms.delete(socketId);
+    
+    if (partner) {
+      // Notify partner BEFORE resetting their state
+      io.to(partner.socketId).emit('partner-next');
+      
+      // Reset partner state
+      partner.isMatched = false;
+      partner.roomId = null;
+      userRooms.delete(partner.socketId);
+      
+      console.log(`Room ${oldRoomId} dissolved. Both users reset.`);
+      
+      // Try to match BOTH users (they can match with each other again)
+      const partnerSocket = io.sockets.sockets.get(partner.socketId);
+      if (partnerSocket) {
+        tryMatchUser(partner, partnerSocket);
+      }
+    }
+    
+    // Try to match current user
+    tryMatchUser(user, socket);
   }
 
   // Separate function for actual disconnect
