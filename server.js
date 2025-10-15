@@ -23,6 +23,7 @@ const users = new Map(); // socketId -> user data
 const rooms = new Map(); // roomId -> room data
 const bannedIPs = new Set();
 const userIPs = new Map(); // socketId -> IP
+const userReports = new Map(); // IP -> array of reports
 
 // Admin system
 let adminKey = 'admin123'; // Default admin key
@@ -44,6 +45,17 @@ class User {
   }
 }
 
+// Report class
+class UserReport {
+  constructor(reportedIp, reporterSocketId, reason) {
+    this.id = uuidv4();
+    this.reportedIp = reportedIp;
+    this.reporterSocketId = reporterSocketId;
+    this.reason = reason;
+    this.timestamp = new Date();
+  }
+}
+
 // Get client IP
 function getClientIP(socket) {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
@@ -60,7 +72,7 @@ function getClientIP(socket) {
 // Ban/unban functions
 function banIP(ip, reason = 'No reason') {
   bannedIPs.add(ip);
-  console.log(`Banned IP: ${ip} - ${reason}`);
+  console.log(`🔨 Banned IP: ${ip} - ${reason}`);
   
   // Disconnect banned users
   for (const [socketId, userIP] of userIPs.entries()) {
@@ -78,9 +90,54 @@ function banIP(ip, reason = 'No reason') {
 function unbanIP(ip) {
   const removed = bannedIPs.delete(ip);
   if (removed) {
-    console.log(`Unbanned IP: ${ip}`);
+    console.log(`✅ Unbanned IP: ${ip}`);
+    // Clear reports for this IP
+    userReports.delete(ip);
   }
   return removed;
+}
+
+// Report handling functions
+function reportUser(reportedIp, reporterSocketId, reason) {
+  // Don't allow self-reporting
+  const reporterIP = userIPs.get(reporterSocketId);
+  if (reporterIP === reportedIp) {
+    return { success: false, message: 'Cannot report yourself' };
+  }
+
+  // Check if IP is already banned
+  if (bannedIPs.has(reportedIp)) {
+    return { success: false, message: 'User is already banned' };
+  }
+
+  // Create report
+  const report = new UserReport(reportedIp, reporterSocketId, reason);
+  
+  // Store report
+  if (!userReports.has(reportedIp)) {
+    userReports.set(reportedIp, []);
+  }
+  userReports.get(reportedIp).push(report);
+
+  const reportCount = userReports.get(reportedIp).length;
+  console.log(`📋 Report #${reportCount} filed against IP: ${reportedIp} by ${reporterSocketId}`);
+  console.log(`   Reason: ${reason}`);
+
+  // Auto-ban after 3 reports
+  if (reportCount >= 3) {
+    banIP(reportedIp, `Auto-banned after ${reportCount} reports`);
+    return { 
+      success: true, 
+      message: `User reported and banned (${reportCount}/3 reports)`,
+      banned: true 
+    };
+  }
+
+  return { 
+    success: true, 
+    message: `User reported (${reportCount}/3 reports)`,
+    banned: false 
+  };
 }
 
 // Matching logic
@@ -117,7 +174,7 @@ io.on('connection', (socket) => {
   const clientIP = getClientIP(socket);
   userIPs.set(socket.id, clientIP);
   
-  console.log(`User connected: ${socket.id} from ${clientIP}`);
+  console.log(`👤 User connected: ${socket.id} from ${clientIP}`);
   
   // Check if IP is banned
   if (bannedIPs.has(clientIP)) {
@@ -154,30 +211,60 @@ io.on('connection', (socket) => {
       socket.join(room.id);
       io.sockets.sockets.get(match.socketId)?.join(room.id);
       
-      // Notify users
+      // Notify users with partner IP information
       socket.emit('matched', {
         roomId: room.id,
         isOfferer: true,
-        partner: { socketId: match.socketId, userInfo: match.userInfo }
+        partner: { 
+          socketId: match.socketId, 
+          userInfo: match.userInfo,
+          ip: match.ip // Include partner IP
+        }
       });
       
       io.to(match.socketId).emit('matched', {
         roomId: room.id,
         isOfferer: false,
-        partner: { socketId: user.socketId, userInfo: user.userInfo }
+        partner: { 
+          socketId: user.socketId, 
+          userInfo: user.userInfo,
+          ip: user.ip // Include partner IP
+        }
       });
       
-      console.log(`Match: ${user.socketId} <-> ${match.socketId}`);
+      console.log(`🤝 Match: ${user.socketId} (${user.ip}) <-> ${match.socketId} (${match.ip})`);
     } else {
       socket.emit('waiting', { message: 'Looking for a match...' });
     }
+  });
+
+  // Handle user reporting
+  socket.on('report-user', (data) => {
+    const { reportedUserIp, reason } = data;
+    
+    if (!reportedUserIp || !reason) {
+      socket.emit('report-response', { 
+        success: false, 
+        message: 'Missing required fields' 
+      });
+      return;
+    }
+
+    console.log(`📢 Report received from ${socket.id} against IP: ${reportedUserIp}`);
+    console.log(`   Reason: ${reason}`);
+
+    const result = reportUser(reportedUserIp, socket.id, reason);
+    socket.emit('report-response', result);
+
+    // Log to admin console
+    console.log(`📊 Report result: ${result.message}`);
   });
 
   // Add handler for manual user count request
   socket.on('get-user-count', () => {
     const currentUserCount = io.sockets.sockets.size;
     socket.emit('update-user-count', currentUserCount);
-    console.log(`Sent user count to ${socket.id}: ${currentUserCount}`);
+    console.log(`📤 Sent user count to ${socket.id}: ${currentUserCount}`);
   });
 
   // WebRTC signaling
@@ -245,13 +332,21 @@ io.on('connection', (socket) => {
         io.to(partner.socketId).emit('matched', {
           roomId: newRoom.id,
           isOfferer: true,
-          partner: { socketId: newMatch.socketId, userInfo: newMatch.userInfo }
+          partner: { 
+            socketId: newMatch.socketId, 
+            userInfo: newMatch.userInfo,
+            ip: newMatch.ip
+          }
         });
         
         io.to(newMatch.socketId).emit('matched', {
           roomId: newRoom.id,
           isOfferer: false,
-          partner: { socketId: partner.socketId, userInfo: partner.userInfo }
+          partner: { 
+            socketId: partner.socketId, 
+            userInfo: partner.userInfo,
+            ip: partner.ip
+          }
         });
       } else {
         io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
@@ -268,13 +363,21 @@ io.on('connection', (socket) => {
       socket.emit('matched', {
         roomId: newRoom.id,
         isOfferer: true,
-        partner: { socketId: newMatch.socketId, userInfo: newMatch.userInfo }
+        partner: { 
+          socketId: newMatch.socketId, 
+          userInfo: newMatch.userInfo,
+          ip: newMatch.ip
+        }
       });
       
       io.to(newMatch.socketId).emit('matched', {
         roomId: newRoom.id,
         isOfferer: false,
-        partner: { socketId: user.socketId, userInfo: user.userInfo }
+        partner: { 
+          socketId: user.socketId, 
+          userInfo: user.userInfo,
+          ip: user.ip
+        }
       });
     } else {
       socket.emit('waiting', { message: 'Looking for a match...' });
@@ -282,7 +385,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log(`User disconnected: ${socket.id}`);
+    console.log(`👋 User disconnected: ${socket.id}`);
     
     const user = users.get(socket.id);
     if (user) {
@@ -310,13 +413,21 @@ io.on('connection', (socket) => {
               io.to(partner.socketId).emit('matched', {
                 roomId: newRoom.id,
                 isOfferer: true,
-                partner: { socketId: newMatch.socketId, userInfo: newMatch.userInfo }
+                partner: { 
+                  socketId: newMatch.socketId, 
+                  userInfo: newMatch.userInfo,
+                  ip: newMatch.ip
+                }
               });
               
               io.to(newMatch.socketId).emit('matched', {
                 roomId: newRoom.id,
                 isOfferer: false,
-                partner: { socketId: partner.socketId, userInfo: partner.userInfo }
+                partner: { 
+                  socketId: partner.socketId, 
+                  userInfo: partner.userInfo,
+                  ip: partner.ip
+                }
               });
             } else {
               io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
@@ -351,14 +462,46 @@ app.get('/api/stats', (req, res) => {
   const onlineUsers = Array.from(users.values()).filter(u => u.isOnline);
   const matchedUsers = onlineUsers.filter(u => u.isMatched);
   
+  // Calculate report statistics
+  const totalReports = Array.from(userReports.values()).reduce((sum, reports) => sum + reports.length, 0);
+  const reportedIPs = userReports.size;
+  
   res.json({
     totalUsers: users.size,
     onlineUsers: onlineUsers.length,
     matchedUsers: matchedUsers.length,
     waitingUsers: onlineUsers.length - matchedUsers.length,
     activeRooms: rooms.size,
-    bannedIPs: bannedIPs.size
+    bannedIPs: bannedIPs.size,
+    totalReports,
+    reportedIPs
   });
+});
+
+// Get reports endpoint
+app.get('/api/admin/reports', (req, res) => {
+  const { adminKey: providedKey } = req.query;
+  
+  if (providedKey !== adminKey) {
+    return res.status(401).json({ error: 'Invalid admin key' });
+  }
+
+  const reportsArray = [];
+  for (const [ip, reports] of userReports.entries()) {
+    reportsArray.push({
+      ip,
+      reportCount: reports.length,
+      reports: reports.map(r => ({
+        id: r.id,
+        reporterSocketId: r.reporterSocketId,
+        reason: r.reason,
+        timestamp: r.timestamp
+      })),
+      isBanned: bannedIPs.has(ip)
+    });
+  }
+
+  res.json({ reports: reportsArray });
 });
 
 // Admin API (for normal admins)
@@ -409,7 +552,8 @@ app.get('/api/admin/users', (req, res) => {
     userInfo: user.userInfo,
     isOnline: user.isOnline,
     isMatched: user.isMatched,
-    connectedAt: user.connectedAt
+    connectedAt: user.connectedAt,
+    reportCount: userReports.has(user.ip) ? userReports.get(user.ip).length : 0
   }));
   
   res.json({ users: userList });
@@ -423,6 +567,29 @@ app.get('/api/admin/banned-ips', (req, res) => {
   }
   
   res.json({ bannedIPs: Array.from(bannedIPs) });
+});
+
+// Clear reports for an IP (admin only)
+app.post('/api/admin/clear-reports', (req, res) => {
+  const { ip, adminKey: providedKey } = req.body;
+  
+  if (providedKey !== adminKey) {
+    return res.status(401).json({ error: 'Invalid admin key' });
+  }
+  
+  if (!ip) {
+    return res.status(400).json({ error: 'IP address required' });
+  }
+  
+  const hadReports = userReports.has(ip);
+  if (hadReports) {
+    userReports.delete(ip);
+  }
+  
+  res.json({ 
+    success: true, 
+    message: hadReports ? `Cleared reports for IP: ${ip}` : `No reports found for IP: ${ip}` 
+  });
 });
 
 // Super Admin API (for you only)
@@ -465,6 +632,7 @@ server.listen(PORT, () => {
   console.log(`📊 Public Admin Panel: http://localhost:${PORT}/admin`);
   console.log(`🔐 Super Admin Panel: http://localhost:${PORT}/super-admin/${superAdminToken}`);
   console.log(`🔑 Current Admin Key: ${adminKey}`);
+  console.log(`📋 Report System: Enabled (Auto-ban after 3 reports)`);
 });
 
 module.exports = { app, server, io };
