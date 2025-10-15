@@ -126,6 +126,13 @@ io.on('connection', (socket) => {
     return;
   }
 
+  // Send current user count immediately when user connects
+  const currentUserCount = io.sockets.sockets.size;
+  socket.emit('update-user-count', currentUserCount);
+  
+  // Broadcast updated count to all users
+  io.emit('update-user-count', currentUserCount);
+
   socket.on('join', (data) => {
     const { countries, userInfo } = data;
     
@@ -164,6 +171,13 @@ io.on('connection', (socket) => {
     } else {
       socket.emit('waiting', { message: 'Looking for a match...' });
     }
+  });
+
+  // Add handler for manual user count request
+  socket.on('get-user-count', () => {
+    const currentUserCount = io.sockets.sockets.size;
+    socket.emit('update-user-count', currentUserCount);
+    console.log(`Sent user count to ${socket.id}: ${currentUserCount}`);
   });
 
   // WebRTC signaling
@@ -316,6 +330,10 @@ io.on('connection', (socket) => {
     }
     
     userIPs.delete(socket.id);
+    
+    // Broadcast updated user count after disconnect
+    const currentUserCount = io.sockets.sockets.size;
+    io.emit('update-user-count', currentUserCount);
   });
 });
 
