@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Video Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .login-section {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .admin-content {
+            display: none;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            display: block;
+        }
+
+        .stat-label {
+            color: #666;
+            margin-top: 10px;
+            font-size: 1.1em;
+        }
+
+        .section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .tab.active {
+            border-bottom-color: #667eea;
+            color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        input, button, select {
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-danger {
+            background: #e53e3e;
+        }
+
+        .btn-danger:hover {
+            background: #c53030;
+            box-shadow: 0 5px 15px rgba(229, 62, 62, 0.3);
+        }
+
+        .btn-success {
+            background: #38a169;
+        }
+
+        .btn-success:hover {
+            background: #2f855a;
+            box-shadow: 0 5px 15px rgba(56, 161, 105, 0.3);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .status-online {
+            background: #c6f6d5;
+            color: #2f855a;
+        }
+
+        .status-offline {
+            background: #fed7d7;
+            color: #c53030;
+        }
+
+        .status-matched {
+            background: #bee3f8;
+            color: #2b6cb0;
+        }
+
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .message.success {
+            background: #c6f6d5;
+            color: #2f855a;
+            border: 1px solid #9ae6b4;
+        }
+
+        .message.error {
+            background: #fed7d7;
+            color: #c53030;
+            border: 1px solid #fbb6ce;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .input-group {
+                flex-direction: column;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .tabs {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 Admin Panel</h1>
+            <p>Video Chat Management Dashboard</p>
+        </div>
+
+        <div class="login-section" id="loginSection">
+            <h2>Admin Login</h2>
+            <p style="color: #666; margin-bottom: 20px;">Enter your admin key to access the management dashboard</p>
+            <div class="input-group" style="justify-content: center;">
+                <input type="password" id="adminKey" placeholder="Enter admin key" style="min-width: 300px;">
+                <button onclick="login()">Login</button>
+            </div>
+            <div id="loginMessage"></div>
+        </div>
+
+        <div class="admin-content" id="adminContent">
+            <!-- Stats Dashboard -->
+            <div class="stats-grid" id="statsGrid">
+                <!-- Stats will be loaded here -->
+            </div>
+
+            <!-- Main Content -->
+            <div class="section">
+                <div class="tabs">
+                    <div class="tab active" onclick="showTab('users')">Users</div>
+                    <div class="tab" onclick="showTab('banned')">Banned IPs</div>
+                    <div class="tab" onclick="showTab('tools')">Admin Tools</div>
+                </div>
+
+                <!-- Users Tab -->
+                <div class="tab-content active" id="users">
+                    <h2>👥 Active Users</h2>
+                    <div class="input-group">
+                        <input type="text" id="userSearch" placeholder="Search by IP or country" style="flex: 1;">
+                        <button onclick="loadUsers()">🔍 Search</button>
+                    </div>
+                    <div id="usersTable">
+                        <div class="loading">Loading users...</div>
+                    </div>
+                </div>
+
+                <!-- Banned IPs Tab -->
+                <div class="tab-content" id="banned">
+                    <h2>🚫 Banned IP Addresses</h2>
+                    <div id="bannedTable">
+                        <div class="loading">Loading banned IPs...</div>
+                    </div>
+                </div>
+
+                <!-- Admin Tools Tab -->
+                <div class="tab-content" id="tools">
+                    <h2>🛠️ Admin Tools</h2>
+                    
+                    <div style="margin-bottom: 30px;">
+                        <h3>Ban IP Address</h3>
+                        <div class="input-group">
+                            <input type="text" id="banIP" placeholder="IP Address (e.g., 192.168.1.100)">
+                            <input type="text" id="banReason" placeholder="Reason for ban" style="flex: 2;">
+                            <button class="btn-danger" onclick="banUser()">🚫 Ban IP</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3>Unban IP Address</h3>
+                        <div class="input-group">
+                            <input type="text" id="unbanIP" placeholder="IP Address to unban">
+                            <button class="btn-success" onclick="unbanUser()">✅ Unban IP</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button class="refresh-btn" onclick="refreshAll()" title="Refresh All Data">
+            ↻
+        </button>
+    </div>
+
+    <script>
+        let adminKey = '';
+        let refreshInterval;
+
+        // Login function
+        function login() {
+            const key = document.getElementById('adminKey').value;
+            if (!key) {
+                showMessage('Please enter admin key', 'error');
+                return;
+            }
+
+            adminKey = key;
+            
+            // Test login by loading stats
+            loadStats().then(() => {
+                document.getElementById('loginSection').style.display = 'none';
+                document.getElementById('adminContent').style.display = 'block';
+                showMessage('Login successful!', 'success');
+                
+                // Load initial data
+                loadUsers();
+                loadBannedIPs();
+                
+                // Start auto-refresh
+                startAutoRefresh();
+            }).catch(() => {
+                showMessage('Invalid admin key', 'error');
+                adminKey = '';
+            });
+        }
+
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('loginMessage');
+            messageDiv.innerHTML = `<div class="message ${type}">${message}</div>`;
+            setTimeout(() => {
+                messageDiv.innerHTML = '';
+            }, 3000);
+        }
+
+        // Tab management
+        function showTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // API functions
+        async function apiCall(endpoint, options = {}) {
+            const url = endpoint.includes('?') ? 
+                `${endpoint}&adminKey=${adminKey}` : 
+                `${endpoint}?adminKey=${adminKey}`;
+            
+            const response = await fetch(url, {
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`API Error: ${response.statusText}`);
+            }
+            
+            return response.json();
+        }
+
+        // Load stats
+        async function loadStats() {
+            try {
+                const stats = await apiCall('/api/stats');
+                
+                const statsGrid = document.getElementById('statsGrid');
+                statsGrid.innerHTML = `
+                    <div class="stat-card">
+                        <span class="stat-number">${stats.onlineUsers}</span>
+                        <div class="stat-label">Online Users</div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number">${stats.matchedUsers}</span>
+                        <div class="stat-label">Matched Users</div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number">${stats.waitingUsers}</span>
+                        <div class="stat-label">Waiting Users</div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number">${stats.activeRooms}</span>
+                        <div class="stat-label">Active Rooms</div>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number">${stats.bannedIPs}</span>
+                        <div class="stat-label">Banned IPs</div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                throw error;
+            }
+        }
+
+        // Load users
+        async function loadUsers() {
+            try {
+                const container = document.getElementById('usersTable');
+                container.innerHTML = '<div class="loading">Loading users...</div>';
+                
+                const data = await apiCall('/api/admin/users');
+                const users = data.users;
+                
+                const searchTerm = document.getElementById('userSearch').value.toLowerCase();
+                let filteredUsers = users;
+                
+                if (searchTerm) {
+                    filteredUsers = users.filter(user => 
+                        user.ip.toLowerCase().includes(searchTerm) ||
+                        user.countries.join(',').toLowerCase().includes(searchTerm)
+                    );
+                }
+                
+                if (filteredUsers.length === 0) {
+                    container.innerHTML = '<div class="loading">No users found.</div>';
+                    return;
+                }
+                
+                const tableHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>IP Address</th>
+                                <th>Status</th>
+                                <th>Countries</th>
+                                <th>Connected At</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${filteredUsers.map(user => `
+                                <tr>
+                                    <td>${user.ip}</td>
+                                    <td>
+                                        ${user.isOnline ? 
+                                            (user.isMatched ? '<span class="status-badge status-matched">Matched</span>' : '<span class="status-badge status-online">Online</span>') :
+                                            '<span class="status-badge status-offline">Offline</span>'
+                                        }
+                                    </td>
+                                    <td>${user.countries.join(', ')}</td>
+                                    <td>${new Date(user.connectedAt).toLocaleString()}</td>
+                                    <td>
+                                        <button class="btn-danger" onclick="banUserFromTable('${user.ip}')">Ban</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+                
+                container.innerHTML = tableHTML;
+            } catch (error) {
+                console.error('Error loading users:', error);
+                document.getElementById('usersTable').innerHTML = '<div class="loading">Error loading users.</div>';
+            }
+        }
+
+        // Load banned IPs
+        async function loadBannedIPs() {
+            try {
+                const container = document.getElementById('bannedTable');
+                container.innerHTML = '<div class="loading">Loading banned IPs...</div>';
+                
+                const data = await apiCall('/api/admin/banned-ips');
+                const bannedIPs = data.bannedIPs;
+                
+                if (bannedIPs.length === 0) {
+                    container.innerHTML = '<div class="loading">No banned IPs found.</div>';
+                    return;
+                }
+                
+                const tableHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>IP Address</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${bannedIPs.map(ip => `
+                                <tr>
+                                    <td>${ip}</td>
+                                    <td>
+                                        <button class="btn-success" onclick="unbanUserFromTable('${ip}')">Unban</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+                
+                container.innerHTML = tableHTML;
+            } catch (error) {
+                console.error('Error loading banned IPs:', error);
+                document.getElementById('bannedTable').innerHTML = '<div class="loading">Error loading banned IPs.</div>';
+            }
+        }
+
+        // Ban user
+        async function banUser() {
+            const ip = document.getElementById('banIP').value;
+            const reason = document.getElementById('banReason').value;
+            
+            if (!ip) {
+                alert('Please enter an IP address');
+                return;
+            }
+            
+            try {
+                await fetch('/api/admin/ban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ip,
+                        reason: reason || 'No reason provided',
+                        adminKey
+                    })
+                });
+                
+                alert(`Successfully banned IP: ${ip}`);
+                document.getElementById('banIP').value = '';
+                document.getElementById('banReason').value = '';
+                
+                refreshAll();
+            } catch (error) {
+                alert('Error banning user. Please try again.');
+            }
+        }
+
+        // Unban user
+        async function unbanUser() {
+            const ip = document.getElementById('unbanIP').value;
+            
+            if (!ip) {
+                alert('Please enter an IP address');
+                return;
+            }
+            
+            try {
+                await fetch('/api/admin/unban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip, adminKey })
+                });
+                
+                alert(`Successfully unbanned IP: ${ip}`);
+                document.getElementById('unbanIP').value = '';
+                
+                refreshAll();
+            } catch (error) {
+                alert('Error unbanning user. Please try again.');
+            }
+        }
+
+        // Ban user from table
+        async function banUserFromTable(ip) {
+            const reason = prompt(`Enter reason for banning ${ip}:`);
+            if (reason === null) return;
+            
+            try {
+                await fetch('/api/admin/ban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ip,
+                        reason: reason || 'No reason provided',
+                        adminKey
+                    })
+                });
+                
+                alert(`Successfully banned IP: ${ip}`);
+                refreshAll();
+            } catch (error) {
+                alert('Error banning user. Please try again.');
+            }
+        }
+
+        // Unban user from table
+        async function unbanUserFromTable(ip) {
+            if (!confirm(`Are you sure you want to unban ${ip}?`)) return;
+            
+            try {
+                await fetch('/api/admin/unban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip, adminKey })
+                });
+                
+                alert(`Successfully unbanned IP: ${ip}`);
+                refreshAll();
+            } catch (error) {
+                alert('Error unbanning user. Please try again.');
+            }
+        }
+
+        // Auto-refresh
+        function startAutoRefresh() {
+            refreshInterval = setInterval(() => {
+                loadStats();
+                const activeTab = document.querySelector('.tab-content.active');
+                if (activeTab.id === 'users') {
+                    loadUsers();
+                } else if (activeTab.id === 'banned') {
+                    loadBannedIPs();
+                }
+            }, 10000); // Refresh every 10 seconds
+        }
+
+        function refreshAll() {
+            loadStats();
+            loadUsers();
+            loadBannedIPs();
+        }
+
+        // Event listeners
+        document.getElementById('adminKey').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                login();
+            }
+        });
+
+        document.getElementById('userSearch').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                loadUsers();
+            }
+        });
+    </script>
+</body>
+</html>
