@@ -319,17 +319,52 @@ io.on('connection', (socket) => {
       partner.isMatched = false;
       partner.roomId = null;
       
-      // Try to rematch partner
-      const newMatch = findMatch(partner);
+      // Wait a moment before trying to rematch to ensure clean state
+      setTimeout(() => {
+        // Try to rematch partner
+        const newMatch = findMatch(partner);
+        if (newMatch) {
+          const newRoom = createRoom(partner, newMatch);
+          const partnerSocket = io.sockets.sockets.get(partner.socketId);
+          const matchSocket = io.sockets.sockets.get(newMatch.socketId);
+          
+          partnerSocket?.join(newRoom.id);
+          matchSocket?.join(newRoom.id);
+          
+          io.to(partner.socketId).emit('matched', {
+            roomId: newRoom.id,
+            isOfferer: true,
+            partner: { 
+              socketId: newMatch.socketId, 
+              userInfo: newMatch.userInfo,
+              ip: newMatch.ip
+            }
+          });
+          
+          io.to(newMatch.socketId).emit('matched', {
+            roomId: newRoom.id,
+            isOfferer: false,
+            partner: { 
+              socketId: partner.socketId, 
+              userInfo: partner.userInfo,
+              ip: partner.ip
+            }
+          });
+        } else {
+          io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
+        }
+      }, 500);
+    }
+    
+    // Wait a moment before trying to rematch current user
+    setTimeout(() => {
+      const newMatch = findMatch(user);
       if (newMatch) {
-        const newRoom = createRoom(partner, newMatch);
-        const partnerSocket = io.sockets.sockets.get(partner.socketId);
-        const matchSocket = io.sockets.sockets.get(newMatch.socketId);
+        const newRoom = createRoom(user, newMatch);
+        socket.join(newRoom.id);
+        io.sockets.sockets.get(newMatch.socketId)?.join(newRoom.id);
         
-        partnerSocket?.join(newRoom.id);
-        matchSocket?.join(newRoom.id);
-        
-        io.to(partner.socketId).emit('matched', {
+        socket.emit('matched', {
           roomId: newRoom.id,
           isOfferer: true,
           partner: { 
@@ -343,45 +378,15 @@ io.on('connection', (socket) => {
           roomId: newRoom.id,
           isOfferer: false,
           partner: { 
-            socketId: partner.socketId, 
-            userInfo: partner.userInfo,
-            ip: partner.ip
+            socketId: user.socketId, 
+            userInfo: user.userInfo,
+            ip: user.ip
           }
         });
       } else {
-        io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
+        socket.emit('waiting', { message: 'Looking for a match...' });
       }
-    }
-    
-    // Try to rematch current user
-    const newMatch = findMatch(user);
-    if (newMatch) {
-      const newRoom = createRoom(user, newMatch);
-      socket.join(newRoom.id);
-      io.sockets.sockets.get(newMatch.socketId)?.join(newRoom.id);
-      
-      socket.emit('matched', {
-        roomId: newRoom.id,
-        isOfferer: true,
-        partner: { 
-          socketId: newMatch.socketId, 
-          userInfo: newMatch.userInfo,
-          ip: newMatch.ip
-        }
-      });
-      
-      io.to(newMatch.socketId).emit('matched', {
-        roomId: newRoom.id,
-        isOfferer: false,
-        partner: { 
-          socketId: user.socketId, 
-          userInfo: user.userInfo,
-          ip: user.ip
-        }
-      });
-    } else {
-      socket.emit('waiting', { message: 'Looking for a match...' });
-    }
+    }, 500);
   });
 
   socket.on('disconnect', () => {
