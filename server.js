@@ -98,6 +98,9 @@ function checkBanStatus(ip) {
 }
 
 // Ban IP function
+// server.js
+
+// Ban IP function
 function banIP(ip, reason = 'No reason provided', durationHours = 24) {
   const durationMs = durationHours * 60 * 60 * 1000;
   
@@ -119,7 +122,8 @@ function banIP(ip, reason = 'No reason provided', durationHours = 24) {
           reason: reason,
           banDurationMs: durationMs
         });
-        socket.disconnect(true);
+        // DO NOT DISCONNECT THE USER. Let the client handle it.
+        // socket.disconnect(true); // <--- REMOVE THIS LINE
       }
     }
   }
