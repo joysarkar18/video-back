@@ -545,6 +545,7 @@ io.on('connection', (socket) => {
       partner.isMatched = false;
       partner.roomId = null;
       
+      // Don't immediately send 'waiting' - let the partner find a match or stay waiting
       setTimeout(() => {
         const newMatch = findMatch(partner);
         if (newMatch) {
@@ -575,6 +576,7 @@ io.on('connection', (socket) => {
             }
           });
         } else {
+          // Only send waiting if no match found
           io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
         }
       }, 500);
@@ -607,13 +609,13 @@ io.on('connection', (socket) => {
           }
         });
       } else {
+        // Only send waiting if no match found
         socket.emit('waiting', { message: 'Looking for a match...' });
       }
     }, 500);
     
     broadcastStats();
   });
-
   socket.on('disconnect', () => {
     console.log(`👋 User disconnected: ${socket.id}`);
     
@@ -626,41 +628,46 @@ io.on('connection', (socket) => {
         if (room) {
           const partner = room.users.find(u => u.socketId !== socket.id);
           if (partner) {
+            // Notify partner immediately
             io.to(partner.socketId).emit('partner-disconnected');
             partner.isMatched = false;
             partner.roomId = null;
             
-            const newMatch = findMatch(partner);
-            if (newMatch) {
-              const newRoom = createRoom(partner, newMatch);
-              const partnerSocket = io.sockets.sockets.get(partner.socketId);
-              const matchSocket = io.sockets.sockets.get(newMatch.socketId);
-              
-              partnerSocket?.join(newRoom.id);
-              matchSocket?.join(newRoom.id);
-              
-              io.to(partner.socketId).emit('matched', {
-                roomId: newRoom.id,
-                isOfferer: true,
-                partner: { 
-                  socketId: newMatch.socketId, 
-                  userInfo: newMatch.userInfo,
-                  ip: newMatch.ip
-                }
-              });
-              
-              io.to(newMatch.socketId).emit('matched', {
-                roomId: newRoom.id,
-                isOfferer: false,
-                partner: { 
-                  socketId: partner.socketId, 
-                  userInfo: partner.userInfo,
-                  ip: partner.ip
-                }
-              });
-            } else {
-              io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
-            }
+            // Try to find new match after a delay
+            setTimeout(() => {
+              const newMatch = findMatch(partner);
+              if (newMatch) {
+                const newRoom = createRoom(partner, newMatch);
+                const partnerSocket = io.sockets.sockets.get(partner.socketId);
+                const matchSocket = io.sockets.sockets.get(newMatch.socketId);
+                
+                partnerSocket?.join(newRoom.id);
+                matchSocket?.join(newRoom.id);
+                
+                io.to(partner.socketId).emit('matched', {
+                  roomId: newRoom.id,
+                  isOfferer: true,
+                  partner: { 
+                    socketId: newMatch.socketId, 
+                    userInfo: newMatch.userInfo,
+                    ip: newMatch.ip
+                  }
+                });
+                
+                io.to(newMatch.socketId).emit('matched', {
+                  roomId: newRoom.id,
+                  isOfferer: false,
+                  partner: { 
+                    socketId: partner.socketId, 
+                    userInfo: partner.userInfo,
+                    ip: partner.ip
+                  }
+                });
+              } else {
+                // Only send waiting if no match found
+                io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
+              }
+            }, 500);
           }
           rooms.delete(user.roomId);
         }
