@@ -4,6 +4,7 @@ const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
@@ -24,12 +25,16 @@ const rooms = new Map(); // roomId -> room data
 const bannedIPs = new Map(); // IP -> { timestamp, reason, duration }
 const userIPs = new Map(); // socketId -> IP
 const userReports = new Map(); // IP -> array of reports
+const verifiedUnbans = new Map(); // transactionId -> { ip, timestamp }
 
 // Admin system
 let adminKey = 'admin123';
 const superAdminToken = 'super-admin-' + uuidv4();
 
 console.log(`🔐 Super Admin Panel: http://localhost:${process.env.PORT || 3000}/super-admin/${superAdminToken}`);
+
+// RevenueCat configuration
+const rcApiKey = process.env.REVENUECAT_API_KEY || 'your_revenuecat_api_key';
 
 // User class
 class User {
@@ -98,9 +103,6 @@ function checkBanStatus(ip) {
 }
 
 // Ban IP function
-// server.js
-
-// Ban IP function
 function banIP(ip, reason = 'No reason provided', durationHours = 24) {
   const durationMs = durationHours * 60 * 60 * 1000;
   
@@ -122,8 +124,6 @@ function banIP(ip, reason = 'No reason provided', durationHours = 24) {
           reason: reason,
           banDurationMs: durationMs
         });
-        // DO NOT DISCONNECT THE USER. Let the client handle it.
-        // socket.disconnect(true); // <--- REMOVE THIS LINE
       }
     }
   }
@@ -142,6 +142,54 @@ function unbanIP(ip) {
   
   broadcastStats();
   return removed;
+}
+
+// Verify RevenueCat transaction
+async function verifyRevenueCatTransaction(transactionId, receiptToken) {
+  try {
+    console.log(`🔍 Verifying RevenueCat transaction: ${transactionId}`);
+
+    // Call RevenueCat API to verify the receipt
+    const response = await fetch('https://api.revenuecat.com/v1/receipts/verify', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${rcApiKey}`,
+        'Content-Type': 'application/json',
+        'X-Platform': 'android'
+      },
+      body: JSON.stringify({
+        receipt_token: receiptToken,
+        transaction_id: transactionId
+      })
+    });
+
+    if (!response.ok) {
+      console.error(`❌ RevenueCat API error: ${response.status}`);
+      console.error(`Response: ${await response.text()}`);
+      return false;
+    }
+
+    const data = await response.json();
+    console.log(`✅ RevenueCat verification response:`, data);
+
+    // Check if the receipt is valid and has the unban entitlement
+    if (data.is_valid && data.entitlements && data.entitlements.active) {
+      const hasUnbanEntitlement = Object.keys(data.entitlements.active).some(key => 
+        key.includes('unban') || key === 'unban_entitlement'
+      );
+
+      if (hasUnbanEntitlement) {
+        console.log(`✅ Unban entitlement confirmed for transaction: ${transactionId}`);
+        return true;
+      }
+    }
+
+    console.log(`❌ No unban entitlement found in transaction: ${transactionId}`);
+    return false;
+  } catch (error) {
+    console.error('❌ Error verifying RevenueCat transaction:', error);
+    return false;
+  }
 }
 
 // Broadcast stats
@@ -306,7 +354,7 @@ io.on('connection', (socket) => {
     broadcastStats();
   });
 
-  // NEW: Ban status check handler
+  // Ban status check handler
   socket.on('check-ban-status', (data, callback) => {
     const clientIP = userIPs.get(socket.id);
     
@@ -340,6 +388,87 @@ io.on('connection', (socket) => {
           isBanned: false,
           message: 'User is not banned'
         });
+      }
+    }
+  });
+
+  // Confirm unban after payment
+  socket.on('confirm-unban', async (data, callback) => {
+    const clientIP = userIPs.get(socket.id);
+    const { revenueCatTransactionId, receiptToken } = data;
+
+    console.log(`\n💰 Unban request received`);
+    console.log(`   Socket ID: ${socket.id}`);
+    console.log(`   Client IP: ${clientIP}`);
+    console.log(`   Transaction ID: ${revenueCatTransactionId}`);
+
+    if (!clientIP) {
+      console.log(`❌ No IP found for socket`);
+      if (callback) {
+        callback({ success: false, message: 'User IP not found' });
+      }
+      return;
+    }
+
+    if (!revenueCatTransactionId) {
+      console.log(`❌ No transaction ID provided`);
+      if (callback) {
+        callback({ success: false, message: 'Invalid transaction ID' });
+      }
+      return;
+    }
+
+    try {
+      // Verify the transaction with RevenueCat
+      const isValid = await verifyRevenueCatTransaction(
+        revenueCatTransactionId,
+        receiptToken || 'verified_by_revenuecat'
+      );
+
+      if (!isValid) {
+        console.log(`❌ RevenueCat verification failed for transaction: ${revenueCatTransactionId}`);
+        if (callback) {
+          callback({ success: false, message: 'Payment verification failed' });
+        }
+        return;
+      }
+
+      console.log(`✅ Payment verified! Unbanning IP: ${clientIP}`);
+
+      // Unban the IP
+      const success = unbanIP(clientIP);
+
+      if (success) {
+        // Store verified unban
+        verifiedUnbans.set(revenueCatTransactionId, {
+          ip: clientIP,
+          timestamp: Date.now(),
+          socketId: socket.id
+        });
+
+        // Notify the user
+        socket.emit('unban-success', {
+          message: 'Ban has been removed! You can now join the chat.',
+          success: true
+        });
+
+        console.log(`🎉 User ${socket.id} from IP ${clientIP} has been unbanned after payment\n`);
+
+        if (callback) {
+          callback({ success: true, message: 'Ban removed successfully' });
+        }
+      } else {
+        console.log(`⚠️ Unban failed for IP: ${clientIP}`);
+        if (callback) {
+          callback({ success: false, message: 'Failed to remove ban' });
+        }
+      }
+
+      broadcastStats();
+    } catch (error) {
+      console.error(`❌ Error during unban process: ${error}`);
+      if (callback) {
+        callback({ success: false, message: 'Server error during unban process' });
       }
     }
   });
@@ -550,6 +679,7 @@ io.on('connection', (socket) => {
 });
 
 // REST API Endpoints
+
 app.get('/api/stats', (req, res) => {
   const onlineUsers = Array.from(users.values()).filter(u => u.isOnline);
   const matchedUsers = onlineUsers.filter(u => u.isMatched);
@@ -687,6 +817,63 @@ app.post('/api/admin/clear-reports', (req, res) => {
   });
 });
 
+// REST endpoint for confirming unban (alternative to Socket.IO)
+app.post('/api/confirm-unban', async (req, res) => {
+  const { ip, revenueCatTransactionId, receiptToken, adminKey: providedKey } = req.body;
+
+  if (!ip || !revenueCatTransactionId) {
+    return res.status(400).json({ 
+      error: 'Missing required fields: ip, revenueCatTransactionId' 
+    });
+  }
+
+  try {
+    // Verify the transaction with RevenueCat
+    const isValid = await verifyRevenueCatTransaction(revenueCatTransactionId, receiptToken);
+
+    if (!isValid) {
+      return res.status(403).json({ 
+        error: 'Payment verification failed' 
+      });
+    }
+
+    // Unban the IP
+    const success = unbanIP(ip);
+
+    if (success) {
+      console.log(`🎉 IP ${ip} unbanned via REST API after payment verification`);
+      
+      // Notify all connected users from this IP about the unban
+      for (const [socketId, userIP] of userIPs.entries()) {
+        if (userIP === ip) {
+          const socket = io.sockets.sockets.get(socketId);
+          if (socket) {
+            socket.emit('unban-success', {
+              message: 'Ban has been removed!',
+              success: true
+            });
+          }
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        message: `IP ${ip} has been unbanned` 
+      });
+    } else {
+      res.status(400).json({ 
+        error: 'Failed to unban IP' 
+      });
+    }
+  } catch (error) {
+    console.error('Error confirming unban:', error);
+    res.status(500).json({ 
+      error: 'Server error during unban process',
+      details: error.message 
+    });
+  }
+});
+
 app.post('/api/super-admin/change-key', (req, res) => {
   const { newKey, token } = req.body;
   
@@ -734,6 +921,7 @@ server.listen(PORT, () => {
   console.log(`📊 Admin Panel: http://localhost:${PORT}/admin`);
   console.log(`🔐 Super Admin Panel: http://localhost:${PORT}/super-admin/${superAdminToken}`);
   console.log(`🔑 Current Admin Key: ${adminKey}`);
+  console.log(`💰 RevenueCat API configured: ${rcApiKey ? '✅' : '❌'}`);
 });
 
 module.exports = { app, server, io };
