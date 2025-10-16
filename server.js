@@ -79,7 +79,7 @@ function banIP(ip, reason = 'No reason') {
     if (userIP === ip) {
       const socket = io.sockets.sockets.get(socketId);
       if (socket) {
-        socket.emit('banned', { message: 'You have been banned', reason });
+        socket.emit('banned', { message: 'You have been banned', reason , duration: Duration.ofMillis(banDurationMs) });
         socket.disconnect(true);
       }
     }
