@@ -235,43 +235,6 @@ io.on('connection', (socket) => {
   
   broadcastStats();
 
-
-  socket.on('check-ban-status', (data, callback) => {
-    const clientIP = userIPs.get(socket.id);
-    
-    if (!clientIP) {
-      if (callback) {
-        callback({ isBanned: false });
-      }
-      return;
-    }
-
-    const banStatus = checkBanStatus(clientIP);
-    
-    if (banStatus && banStatus.isBanned) {
-      console.log(`🚫 Ban check: IP ${clientIP} is banned`);
-      
-      if (callback) {
-        callback({
-          isBanned: true,
-          message: banStatus.message,
-          reason: banStatus.reason,
-          banDurationMs: banStatus.remainingMs,
-          timestamp: new Date().toIso8601String()
-        });
-      }
-    } else {
-      console.log(`✅ Ban check: IP ${clientIP} is not banned`);
-      
-      if (callback) {
-        callback({
-          isBanned: false,
-          message: 'User is not banned'
-        });
-      }
-    }
-  });
-
   socket.on('join', (data) => {
     const { countries, userInfo } = data;
     
@@ -282,7 +245,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // CHECK BAN STATUS BEFORE JOINING - THIS IS KEY
+    // CHECK BAN STATUS BEFORE JOINING
     const banStatus = checkBanStatus(clientIP);
     if (banStatus && banStatus.isBanned) {
       console.log(`🚫 Banned user tried to join: ${clientIP}`);
@@ -337,6 +300,44 @@ io.on('connection', (socket) => {
     }
     
     broadcastStats();
+  });
+
+  // NEW: Ban status check handler
+  socket.on('check-ban-status', (data, callback) => {
+    const clientIP = userIPs.get(socket.id);
+    
+    if (!clientIP) {
+      console.log(`⚠️ Check ban status: No IP found for socket ${socket.id}`);
+      if (callback) {
+        callback({ isBanned: false });
+      }
+      return;
+    }
+
+    const banStatus = checkBanStatus(clientIP);
+    
+    if (banStatus && banStatus.isBanned) {
+      console.log(`🚫 Ban check: IP ${clientIP} is currently BANNED`);
+      
+      if (callback) {
+        callback({
+          isBanned: true,
+          message: banStatus.message,
+          reason: banStatus.reason,
+          banDurationMs: banStatus.remainingMs,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } else {
+      console.log(`✅ Ban check: IP ${clientIP} is NOT banned`);
+      
+      if (callback) {
+        callback({
+          isBanned: false,
+          message: 'User is not banned'
+        });
+      }
+    }
   });
 
   socket.on('report-user', (data) => {
