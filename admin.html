@@ -310,7 +310,6 @@
     <div class="container">
         <h1>Shield Video Chat Admin Panel</h1>
         
-        <!-- Authentication Section -->
         <div class="auth-section" id="authSection">
             <div class="input-group">
                 <label for="adminKey">Admin Key:</label>
@@ -320,50 +319,40 @@
             <div id="authMessage"></div>
         </div>
 
-        <!-- Main Admin Panel (Initially Hidden) -->
         <div id="adminPanel" class="hidden">
-            <!-- Statistics -->
             <div class="stats-grid" id="statsGrid">
-                <!-- Stats will be populated here -->
-            </div>
+                </div>
 
-            <!-- Reports Section -->
             <div class="section reports-section">
                 <h2>Reports</h2>
                 <div class="action-buttons">
                     <button onclick="loadReports()" class="btn-warning">Refresh Reports</button>
                 </div>
                 <div id="reportsContainer">
-                    <!-- Reports will be populated here -->
-                </div>
+                    </div>
                 <div class="last-updated" id="reportsLastUpdated"></div>
             </div>
 
-            <!-- Users Section -->
             <div class="section">
                 <h2>Online Users</h2>
                 <div class="action-buttons">
                     <button onclick="loadUsers()">Refresh Users</button>
                 </div>
                 <div id="usersContainer">
-                    <!-- Users table will be populated here -->
-                </div>
+                    </div>
                 <div class="last-updated" id="usersLastUpdated"></div>
             </div>
 
-            <!-- Banned IPs Section -->
             <div class="section">
                 <h2>Banned IPs</h2>
                 <div class="action-buttons">
                     <button onclick="loadBannedIPs()">Refresh Banned IPs</button>
                 </div>
                 <div id="bannedContainer">
-                    <!-- Banned IPs will be populated here -->
-                </div>
+                    </div>
                 <div class="last-updated" id="bannedLastUpdated"></div>
             </div>
 
-            <!-- Manual Ban Section -->
             <div class="section">
                 <h2>Manual Actions</h2>
                 <div class="input-group">
@@ -379,7 +368,6 @@
                 </div>
             </div>
 
-            <!-- Auto Refresh -->
             <div class="auto-refresh">
                 <label>
                     <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()">
@@ -391,7 +379,6 @@
         <div id="messages"></div>
     </div>
 
-    <!-- Connection Status -->
     <div id="connectionStatus" class="connection-status disconnected">
         Disconnected
     </div>
@@ -684,18 +671,26 @@
                     <thead>
                         <tr>
                             <th>IP Address</th>
+                            <th>Reason</th>
+                            <th>Remaining Time</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
             `;
 
-            bannedIPs.forEach(ip => {
+            bannedIPs.forEach(banInfo => {
+                const remainingMs = banInfo.remainingMs || 0;
+                const remainingMinutes = Math.round(remainingMs / 60000);
+                const remainingTime = remainingMs > 0 ? `${remainingMinutes} minutes` : 'Permanent';
+
                 html += `
                     <tr>
-                        <td>${ip}</td>
+                        <td>${banInfo.ip}</td>
+                        <td>${banInfo.reason || 'N/A'}</td>
+                        <td>${remainingTime}</td>
                         <td>
-                            <button onclick="unbanSpecificIP('${ip}')" class="btn-success">Unban</button>
+                            <button onclick="unbanSpecificIP('${banInfo.ip}')" class="btn-success">Unban</button>
                         </td>
                     </tr>
                 `;
