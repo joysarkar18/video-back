@@ -84,6 +84,9 @@ function banIP(ip, reason = 'No reason') {
       }
     }
   }
+  
+  // Broadcast updated stats to admin panels
+  broadcastStats();
   return true;
 }
 
@@ -94,10 +97,35 @@ function unbanIP(ip) {
     // Clear reports for this IP
     userReports.delete(ip);
   }
+  
+  // Broadcast updated stats to admin panels
+  broadcastStats();
   return removed;
 }
 
-// Report handling functions
+// Broadcast stats to all connected clients
+function broadcastStats() {
+  const onlineUsers = Array.from(users.values()).filter(u => u.isOnline);
+  const matchedUsers = onlineUsers.filter(u => u.isMatched);
+  const totalReports = Array.from(userReports.values()).reduce((sum, reports) => sum + reports.length, 0);
+  const reportedIPs = userReports.size;
+  
+  const stats = {
+    totalUsers: users.size,
+    onlineUsers: onlineUsers.length,
+    matchedUsers: matchedUsers.length,
+    waitingUsers: onlineUsers.length - matchedUsers.length,
+    activeRooms: rooms.size,
+    bannedIPs: bannedIPs.size,
+    totalReports,
+    reportedIPs
+  };
+  
+  // Emit to all connected clients (for real-time updates)
+  io.emit('stats-updated', stats);
+}
+
+// Report handling functions - NO AUTO-BAN
 function reportUser(reportedIp, reporterSocketId, reason) {
   // Don't allow self-reporting
   const reporterIP = userIPs.get(reporterSocketId);
@@ -123,20 +151,15 @@ function reportUser(reportedIp, reporterSocketId, reason) {
   console.log(`📋 Report #${reportCount} filed against IP: ${reportedIp} by ${reporterSocketId}`);
   console.log(`   Reason: ${reason}`);
 
-  // Auto-ban after 3 reports
-  if (reportCount >= 3) {
-    banIP(reportedIp, `Auto-banned after ${reportCount} reports`);
-    return { 
-      success: true, 
-      message: `User reported and banned (${reportCount}/3 reports)`,
-      banned: true 
-    };
-  }
+  // Broadcast updated stats immediately
+  broadcastStats();
 
+  // Return success without auto-banning
   return { 
     success: true, 
-    message: `User reported (${reportCount}/3 reports)`,
-    banned: false 
+    message: `User reported (${reportCount} reports)`,
+    banned: false,
+    reportCount: reportCount
   };
 }
 
@@ -189,6 +212,9 @@ io.on('connection', (socket) => {
   
   // Broadcast updated count to all users
   io.emit('update-user-count', currentUserCount);
+  
+  // Send initial stats
+  broadcastStats();
 
   socket.on('join', (data) => {
     const { countries, userInfo } = data;
@@ -218,7 +244,7 @@ io.on('connection', (socket) => {
         partner: { 
           socketId: match.socketId, 
           userInfo: match.userInfo,
-          ip: match.ip // Include partner IP
+          ip: match.ip
         }
       });
       
@@ -228,7 +254,7 @@ io.on('connection', (socket) => {
         partner: { 
           socketId: user.socketId, 
           userInfo: user.userInfo,
-          ip: user.ip // Include partner IP
+          ip: user.ip
         }
       });
       
@@ -236,11 +262,14 @@ io.on('connection', (socket) => {
     } else {
       socket.emit('waiting', { message: 'Looking for a match...' });
     }
+    
+    // Broadcast updated stats
+    broadcastStats();
   });
 
   // Handle user reporting
   socket.on('report-user', (data) => {
-    const { reportedUserIp, reason } = data;
+    const { reportedUserIp, reason, timestamp } = data;
     
     if (!reportedUserIp || !reason) {
       socket.emit('report-response', { 
@@ -256,7 +285,6 @@ io.on('connection', (socket) => {
     const result = reportUser(reportedUserIp, socket.id, reason);
     socket.emit('report-response', result);
 
-    // Log to admin console
     console.log(`📊 Report result: ${result.message}`);
   });
 
@@ -387,6 +415,9 @@ io.on('connection', (socket) => {
         socket.emit('waiting', { message: 'Looking for a match...' });
       }
     }, 500);
+    
+    // Broadcast updated stats
+    broadcastStats();
   });
 
   socket.on('disconnect', () => {
@@ -450,6 +481,9 @@ io.on('connection', (socket) => {
     // Broadcast updated user count after disconnect
     const currentUserCount = io.sockets.sockets.size;
     io.emit('update-user-count', currentUserCount);
+    
+    // Broadcast updated stats
+    broadcastStats();
   });
 });
 
@@ -466,8 +500,6 @@ app.get(`/super-admin/${superAdminToken}`, (req, res) => {
 app.get('/api/stats', (req, res) => {
   const onlineUsers = Array.from(users.values()).filter(u => u.isOnline);
   const matchedUsers = onlineUsers.filter(u => u.isMatched);
-  
-  // Calculate report statistics
   const totalReports = Array.from(userReports.values()).reduce((sum, reports) => sum + reports.length, 0);
   const reportedIPs = userReports.size;
   
@@ -591,6 +623,9 @@ app.post('/api/admin/clear-reports', (req, res) => {
     userReports.delete(ip);
   }
   
+  // Broadcast updated stats
+  broadcastStats();
+  
   res.json({ 
     success: true, 
     message: hadReports ? `Cleared reports for IP: ${ip}` : `No reports found for IP: ${ip}` 
@@ -637,7 +672,7 @@ server.listen(PORT, () => {
   console.log(`📊 Public Admin Panel: http://localhost:${PORT}/admin`);
   console.log(`🔐 Super Admin Panel: http://localhost:${PORT}/super-admin/${superAdminToken}`);
   console.log(`🔑 Current Admin Key: ${adminKey}`);
-  console.log(`📋 Report System: Enabled (Auto-ban after 3 reports)`);
+  console.log(`📋 Report System: Enabled (Manual ban only - no auto-ban)`);
 });
 
 module.exports = { app, server, io };
