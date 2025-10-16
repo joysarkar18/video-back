@@ -289,68 +289,91 @@ io.on('connection', (socket) => {
 
   socket.on('join', (data) => {
     const { countries, userInfo } = data;
-    
     console.log(`📍 Join request from ${socket.id} (${clientIP})`);
-    
+
     if (!countries || countries.length === 0) {
-      socket.emit('error', { message: 'Please select at least one country' });
-      return;
+      return socket.emit('error', { message: 'Please select at least one country' });
     }
 
-    // CHECK BAN STATUS BEFORE JOINING
     const banStatus = checkBanStatus(clientIP);
     if (banStatus && banStatus.isBanned) {
-      console.log(`🚫 Banned user tried to join: ${clientIP}`);
-      socket.emit('banned', {
-        message: banStatus.message,
-        reason: banStatus.reason,
-        banDurationMs: banStatus.remainingMs
-      });
-      socket.disconnect(true);
-      return;
+        console.log(`🚫 Banned user tried to join: ${clientIP}`);
+        socket.emit('banned', {
+            message: banStatus.message,
+            reason: banStatus.reason,
+            banDurationMs: banStatus.remainingMs
+        });
+        return socket.disconnect(true);
     }
 
-    // User is not banned, proceed
     const user = new User(socket.id, countries, userInfo, clientIP);
     users.set(socket.id, user);
+    console.log(`✅ User ${socket.id} created and waiting for ready signal.`);
+    socket.emit('waiting');
+    broadcastStats();
+  });
 
-    console.log(`✅ User ${socket.id} joined from ${clientIP}`);
+  socket.on('ready-for-match', () => {
+    const user = users.get(socket.id);
+    if (!user) {
+        return console.log(`[Warning] 'ready-for-match' from unknown user ${socket.id}`);
+    }
+    if(user.isMatched) {
+        return console.log(`[Warning] 'ready-for-match' from already matched user ${socket.id}`);
+    }
 
-    // Try to find a match
+    console.log(`[Ready] User ${socket.id} is ready for a match.`);
     const match = findMatch(user);
     
     if (match) {
-      const room = createRoom(user, match);
-      
-      socket.join(room.id);
-      io.sockets.sockets.get(match.socketId)?.join(room.id);
-      
-      socket.emit('matched', {
-        roomId: room.id,
-        isOfferer: true,
-        partner: { 
-          socketId: match.socketId, 
-          userInfo: match.userInfo,
-          ip: match.ip
-        }
-      });
-      
-      io.to(match.socketId).emit('matched', {
-        roomId: room.id,
-        isOfferer: false,
-        partner: { 
-          socketId: user.socketId, 
-          userInfo: user.userInfo,
-          ip: user.ip
-        }
-      });
-      
-      console.log(`🤝 Match: ${user.socketId} (${user.ip}) <-> ${match.socketId} (${match.ip})`);
+        const room = createRoom(user, match);
+        const userSocket = io.sockets.sockets.get(user.socketId);
+        const matchSocket = io.sockets.sockets.get(match.socketId);
+        
+        userSocket?.join(room.id);
+        matchSocket?.join(room.id);
+        
+        userSocket?.emit('matched', {
+            roomId: room.id,
+            isOfferer: true,
+            partner: { socketId: match.socketId, userInfo: match.userInfo, ip: match.ip }
+        });
+        
+        matchSocket?.emit('matched', {
+            roomId: room.id,
+            isOfferer: false,
+            partner: { socketId: user.socketId, userInfo: user.userInfo, ip: user.ip }
+        });
+        
+        console.log(`🤝 Match: ${user.socketId} <-> ${match.socketId}`);
     } else {
-      socket.emit('waiting', { message: 'Looking for a match...' });
-      console.log(`⏳ ${socket.id} waiting for match`);
+        socket.emit('waiting', { message: 'Looking for a match...' });
+        console.log(`⏳ ${socket.id} is waiting for a match.`);
+    }
+    broadcastStats();
+  });
+  
+  socket.on('next', () => {
+    const user = users.get(socket.id);
+    if (!user || !user.isMatched) return;
+
+    const room = rooms.get(user.roomId);
+    if (!room) return;
+
+    const partner = room.users.find(u => u.socketId !== socket.id);
+    
+    console.log(`[Next] User ${socket.id} is leaving their room.`);
+    rooms.delete(user.roomId);
+    user.isMatched = false;
+    user.roomId = null;
+    
+    if (partner) {
+        partner.isMatched = false;
+        partner.roomId = null;
+        io.to(partner.socketId).emit('partner-next');
     }
     
+    socket.emit('waiting'); 
     broadcastStats();
   });
 
@@ -527,92 +550,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('next', () => {
-    const user = users.get(socket.id);
-    if (!user || !user.isMatched) return;
 
-    const room = rooms.get(user.roomId);
-    if (!room) return;
-
-    const partner = room.users.find(u => u.socketId !== socket.id);
-    
-    rooms.delete(user.roomId);
-    user.isMatched = false;
-    user.roomId = null;
-    
-    if (partner) {
-      io.to(partner.socketId).emit('partner-next');
-      partner.isMatched = false;
-      partner.roomId = null;
-      
-      setTimeout(() => {
-        const newMatch = findMatch(partner);
-        if (newMatch) {
-          const newRoom = createRoom(partner, newMatch);
-          const partnerSocket = io.sockets.sockets.get(partner.socketId);
-          const matchSocket = io.sockets.sockets.get(newMatch.socketId);
-          
-          partnerSocket?.join(newRoom.id);
-          matchSocket?.join(newRoom.id);
-          
-          io.to(partner.socketId).emit('matched', {
-            roomId: newRoom.id,
-            isOfferer: true,
-            partner: { 
-              socketId: newMatch.socketId, 
-              userInfo: newMatch.userInfo,
-              ip: newMatch.ip
-            }
-          });
-          
-          io.to(newMatch.socketId).emit('matched', {
-            roomId: newRoom.id,
-            isOfferer: false,
-            partner: { 
-              socketId: partner.socketId, 
-              userInfo: partner.userInfo,
-              ip: partner.ip
-            }
-          });
-        } else {
-          io.to(partner.socketId).emit('waiting', { message: 'Looking for a match...' });
-        }
-      }, 500);
-    }
-    
-    setTimeout(() => {
-      const newMatch = findMatch(user);
-      if (newMatch) {
-        const newRoom = createRoom(user, newMatch);
-        socket.join(newRoom.id);
-        io.sockets.sockets.get(newMatch.socketId)?.join(newRoom.id);
-        
-        socket.emit('matched', {
-          roomId: newRoom.id,
-          isOfferer: true,
-          partner: { 
-            socketId: newMatch.socketId, 
-            userInfo: newMatch.userInfo,
-            ip: newMatch.ip
-          }
-        });
-        
-        io.to(newMatch.socketId).emit('matched', {
-          roomId: newRoom.id,
-          isOfferer: false,
-          partner: { 
-            socketId: user.socketId, 
-            userInfo: user.userInfo,
-            ip: user.ip
-          }
-        });
-      } else {
-        socket.emit('waiting', { message: 'Looking for a match...' });
-      }
-    }, 500);
-    
-    broadcastStats();
-  });
 
   socket.on('disconnect', () => {
     console.log(`👋 User disconnected: ${socket.id}`);
